@@ -15,7 +15,6 @@ import {
   FileCode,
   Subtitles,
   Download,
-  Clock,
   MessageSquare,
   Languages,
   Share2,
@@ -24,6 +23,8 @@ import {
   FolderInput,
   Trash2,
   ChevronRight,
+  Loader2,
+  Check,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
@@ -31,9 +32,19 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
-import { mockTranscripts } from "@/lib/mock-data";
 import { formatTimestamp } from "@/lib/types";
+import { useTranscript } from "@/hooks/useTranscripts";
+import { useAudioUrl } from "@/hooks/useAudio";
+
+type ExportFormat = 'pdf' | 'docx' | 'txt' | 'srt';
 
 export default function TranscriptPage() {
   const params = useParams();
@@ -46,8 +57,20 @@ export default function TranscriptPage() {
   const [volume, setVolume] = useState(1);
   const [isMuted, setIsMuted] = useState(false);
   const [showTimestamps, setShowTimestamps] = useState(false);
+  const [showSpeakers, setShowSpeakers] = useState(true);
+  const [exportingFormat, setExportingFormat] = useState<ExportFormat | null>(null);
+  const [exportSuccess, setExportSuccess] = useState<ExportFormat | null>(null);
+  const [advancedExportOpen, setAdvancedExportOpen] = useState(false);
 
-  const transcript = mockTranscripts.find((t) => t.id === params.id);
+  const { transcript, isLoading, error, deleteTranscript } = useTranscript(params.id as string);
+  const { audioUrl, fetchAudioUrl, deleteAudio } = useAudioUrl(params.id as string);
+
+  // Fetch audio URL when transcript has audio
+  useEffect(() => {
+    if (transcript?.audioUrl) {
+      fetchAudioUrl();
+    }
+  }, [transcript?.audioUrl, fetchAudioUrl]);
 
   useEffect(() => {
     const audio = audioRef.current;
@@ -68,10 +91,23 @@ export default function TranscriptPage() {
     };
   }, [transcript?.duration]);
 
-  if (!transcript) {
+  // Loading state
+  if (isLoading) {
     return (
       <div className="flex items-center justify-center h-full">
-        <p className="text-muted-foreground">Transcript not found</p>
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      </div>
+    );
+  }
+
+  // Error state
+  if (error || !transcript) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full gap-4">
+        <p className="text-muted-foreground">{error || 'Transcript not found'}</p>
+        <Button variant="outline" onClick={() => router.push('/dashboard')}>
+          Back to Dashboard
+        </Button>
       </div>
     );
   }
@@ -116,40 +152,78 @@ export default function TranscriptPage() {
     }
   };
 
-  const seekToTime = (time: number) => {
-    const audio = audioRef.current;
-    if (!audio) return;
-    audio.currentTime = time;
-    setCurrentTime(time);
-    if (!isPlaying) {
-      audio.play();
-      setIsPlaying(true);
+  const handleDelete = async () => {
+    if (confirm('Are you sure you want to delete this transcript?')) {
+      const success = await deleteTranscript();
+      if (success) {
+        router.push('/dashboard');
+      }
+    }
+  };
+
+  const handleExport = async (format: ExportFormat, withTimestamps = false, withSpeakers = false) => {
+    setExportingFormat(format);
+    setExportSuccess(null);
+    
+    try {
+      const params = new URLSearchParams({
+        format,
+        timestamps: withTimestamps.toString(),
+        speakers: withSpeakers.toString(),
+      });
+      
+      const response = await fetch(`/api/export/${transcript.id}?${params}`);
+      
+      if (!response.ok) {
+        throw new Error('Export failed');
+      }
+      
+      // Get the filename from content-disposition header
+      const contentDisposition = response.headers.get('content-disposition');
+      let filename = `${transcript.name}.${format}`;
+      if (contentDisposition) {
+        const match = contentDisposition.match(/filename="(.+)"/);
+        if (match) {
+          filename = match[1];
+        }
+      }
+      
+      // Download the file
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      
+      setExportSuccess(format);
+      setTimeout(() => setExportSuccess(null), 2000);
+    } catch (error) {
+      console.error('Export error:', error);
+      alert('Failed to export transcript');
+    } finally {
+      setExportingFormat(null);
     }
   };
 
   const exportOptions = [
-    { icon: FileText, label: "Download PDF", format: "pdf" },
-    { icon: FileType, label: "Download DOCX", format: "docx" },
-    { icon: FileCode, label: "Download TXT", format: "txt" },
-    { icon: Subtitles, label: "Download SRT", format: "srt" },
+    { icon: FileText, label: "Download PDF", format: "pdf" as ExportFormat },
+    { icon: FileType, label: "Download DOCX", format: "docx" as ExportFormat },
+    { icon: FileCode, label: "Download TXT", format: "txt" as ExportFormat },
+    { icon: Subtitles, label: "Download SRT", format: "srt" as ExportFormat },
   ];
 
-  const moreActions = [
-    { icon: Clock, label: "Show Timestamps", action: () => setShowTimestamps(!showTimestamps), toggle: true },
-    { icon: MessageSquare, label: "ChatGPT", sublabel: "Summarize and chat with this transcript" },
-    { icon: Languages, label: "Translate", sublabel: "Translate this transcript to 134+ languages" },
-    { icon: Share2, label: "Share Transcript" },
-    { icon: Pencil, label: "Edit Transcript" },
-    { icon: Music, label: "Download Audio", sublabel: `${Math.round((transcript.duration * 128) / 8 / 1024)} KB` },
-    { icon: Pencil, label: "Rename File" },
-    { icon: FolderInput, label: "Move" },
-    { icon: Trash2, label: "Delete File", destructive: true },
-  ];
+  const transcriptDuration = transcript.duration || 0;
 
   return (
     <div className="flex flex-col lg:flex-row h-full">
       {/* Hidden Audio Element */}
-      <audio ref={audioRef} src={transcript.audioUrl} preload="metadata" />
+      {audioUrl && (
+        <audio ref={audioRef} src={audioUrl} preload="metadata" />
+      )}
 
       {/* Main Content */}
       <div className="flex-1 flex flex-col min-w-0">
@@ -163,129 +237,126 @@ export default function TranscriptPage() {
             Back to files
           </button>
           <h1 className="text-xl sm:text-2xl font-bold line-clamp-2">
-            {transcript.title}
+            {transcript.name}
           </h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            {format(transcript.createdAt, "MMM d, yyyy, h:mm a")}
-          </p>
+          <div className="flex items-center gap-3 mt-1 text-sm text-muted-foreground">
+            <span>{format(new Date(transcript.createdAt), "MMM d, yyyy, h:mm a")}</span>
+            {transcriptDuration > 0 && (
+              <>
+                <span>•</span>
+                <span>{formatTimestamp(transcriptDuration)}</span>
+              </>
+            )}
+            <span>•</span>
+            <span className="capitalize">{transcript.mode.toLowerCase()} mode</span>
+          </div>
         </div>
 
         {/* Transcript Content */}
         <ScrollArea className="flex-1 p-4 sm:p-6">
-          <div className="max-w-3xl mx-auto space-y-6">
-            {transcript.content && transcript.content.length > 0 ? (
-              transcript.content.map((segment, index) => {
-                const speaker = transcript.speakers?.find(
-                  (s) => s.id === segment.speakerId
-                );
-                return (
-                  <div key={index} className="group">
-                    <div className="flex items-start gap-3">
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2 mb-1">
-                          <span className="font-semibold text-primary">
-                            {speaker?.name || segment.speakerId}
-                          </span>
-                          {showTimestamps && (
-                            <button
-                              onClick={() => seekToTime(segment.startTime)}
-                              className="text-xs text-muted-foreground hover:text-primary transition-colors font-mono"
-                            >
-                              [{formatTimestamp(segment.startTime)}]
-                            </button>
-                          )}
-                        </div>
-                        <p className="text-foreground leading-relaxed">
-                          {segment.text}
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })
+          <div className="max-w-3xl mx-auto">
+            {transcript.status === 'PROCESSING' ? (
+              <div className="text-center py-12">
+                <Loader2 className="h-8 w-8 animate-spin text-primary mx-auto mb-4" />
+                <p className="text-muted-foreground">
+                  Transcription in progress...
+                </p>
+              </div>
+            ) : transcript.status === 'FAILED' ? (
+              <div className="text-center py-12">
+                <p className="text-destructive">
+                  Transcription failed: {transcript.error || 'Unknown error'}
+                </p>
+              </div>
+            ) : transcript.text ? (
+              <div className="prose prose-sm dark:prose-invert max-w-none">
+                <p className="whitespace-pre-wrap leading-relaxed">
+                  {transcript.text}
+                </p>
+              </div>
             ) : (
               <div className="text-center py-12">
                 <p className="text-muted-foreground">
-                  {transcript.status === "processing"
-                    ? "Transcription in progress..."
-                    : "No transcript content available"}
+                  No transcript content available
                 </p>
               </div>
             )}
           </div>
         </ScrollArea>
 
-        {/* Audio Player */}
-        <div className="border-t border-border bg-card p-4">
-          <div className="max-w-4xl mx-auto">
-            {/* Title */}
-            <p className="text-sm font-medium text-center mb-3 truncate px-4">
-              {transcript.title}
-            </p>
+        {/* Audio Player - only show if we have audio */}
+        {audioUrl && (
+          <div className="border-t border-border bg-card p-4">
+            <div className="max-w-4xl mx-auto">
+              {/* Title */}
+              <p className="text-sm font-medium text-center mb-3 truncate px-4">
+                {transcript.name}
+              </p>
 
-            {/* Progress Bar */}
-            <div className="flex items-center gap-3 mb-3">
-              <span className="text-xs text-muted-foreground font-mono w-12 text-right">
-                {formatTimestamp(currentTime)}
-              </span>
-              <Slider
-                value={[currentTime]}
-                max={duration || transcript.duration}
-                step={0.1}
-                onValueChange={handleSeek}
-                className="flex-1"
-              />
-              <span className="text-xs text-muted-foreground font-mono w-12">
-                {formatTimestamp(duration || transcript.duration)}
-              </span>
-            </div>
-
-            {/* Controls */}
-            <div className="flex items-center justify-center gap-4">
-              {/* Play/Pause */}
-              <Button
-                size="icon"
-                variant="outline"
-                className="h-10 w-10 rounded-full"
-                onClick={togglePlay}
-              >
-                {isPlaying ? (
-                  <Pause className="h-5 w-5" />
-                ) : (
-                  <Play className="h-5 w-5 ml-0.5" />
-                )}
-              </Button>
-
-              {/* Volume */}
-              <div className="flex items-center gap-2">
-                <Button
-                  size="icon"
-                  variant="ghost"
-                  className="h-8 w-8"
-                  onClick={toggleMute}
-                >
-                  {isMuted ? (
-                    <VolumeX className="h-4 w-4" />
-                  ) : (
-                    <Volume2 className="h-4 w-4" />
-                  )}
-                </Button>
+              {/* Progress Bar */}
+              <div className="flex items-center gap-3 mb-3">
+                <span className="text-xs text-muted-foreground font-mono w-12 text-right">
+                  {formatTimestamp(currentTime)}
+                </span>
                 <Slider
-                  value={[isMuted ? 0 : volume]}
-                  max={1}
-                  step={0.01}
-                  onValueChange={handleVolumeChange}
-                  className="w-24"
+                  value={[currentTime]}
+                  max={duration || transcriptDuration}
+                  step={0.1}
+                  onValueChange={handleSeek}
+                  className="flex-1"
                 />
+                <span className="text-xs text-muted-foreground font-mono w-12">
+                  {formatTimestamp(duration || transcriptDuration)}
+                </span>
               </div>
 
-              {/* Settings */}
-              <Button size="icon" variant="ghost" className="h-8 w-8">
-                <Settings className="h-4 w-4" />
-              </Button>
+              {/* Controls */}
+              <div className="flex items-center justify-center gap-4">
+                {/* Play/Pause */}
+                <Button
+                  size="icon"
+                  variant="outline"
+                  className="h-10 w-10 rounded-full"
+                  onClick={togglePlay}
+                >
+                  {isPlaying ? (
+                    <Pause className="h-5 w-5" />
+                  ) : (
+                    <Play className="h-5 w-5 ml-0.5" />
+                  )}
+                </Button>
+
+                {/* Volume */}
+                <div className="flex items-center gap-2">
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    className="h-8 w-8"
+                    onClick={toggleMute}
+                  >
+                    {isMuted ? (
+                      <VolumeX className="h-4 w-4" />
+                    ) : (
+                      <Volume2 className="h-4 w-4" />
+                    )}
+                  </Button>
+                  <Slider
+                    value={[isMuted ? 0 : volume]}
+                    max={1}
+                    step={0.01}
+                    onValueChange={handleVolumeChange}
+                    className="w-24"
+                  />
+                </div>
+
+                {/* Settings */}
+                <Button size="icon" variant="ghost" className="h-8 w-8">
+                  <Settings className="h-4 w-4" />
+                </Button>
+              </div>
             </div>
           </div>
-        </div>
+        )}
       </div>
 
       {/* Sidebar - Export & Actions */}
@@ -299,18 +370,29 @@ export default function TranscriptPage() {
                 {exportOptions.map((option) => (
                   <button
                     key={option.format}
-                    className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm hover:bg-muted transition-colors text-left"
+                    onClick={() => handleExport(option.format)}
+                    disabled={exportingFormat !== null}
+                    className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm hover:bg-muted transition-colors text-left disabled:opacity-50"
                   >
-                    <option.icon className="h-4 w-4 text-muted-foreground" />
+                    {exportingFormat === option.format ? (
+                      <Loader2 className="h-4 w-4 animate-spin text-primary" />
+                    ) : exportSuccess === option.format ? (
+                      <Check className="h-4 w-4 text-green-500" />
+                    ) : (
+                      <option.icon className="h-4 w-4 text-muted-foreground" />
+                    )}
                     <span>{option.label}</span>
                   </button>
                 ))}
-                <button className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm hover:bg-muted transition-colors text-left">
+                <button
+                  onClick={() => setAdvancedExportOpen(true)}
+                  className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm hover:bg-muted transition-colors text-left"
+                >
                   <Download className="h-4 w-4 text-muted-foreground" />
                   <div>
                     <span>Advanced Export</span>
                     <p className="text-xs text-muted-foreground">
-                      Export with timestamps and in more formats
+                      Export with timestamps and speakers
                     </p>
                   </div>
                 </button>
@@ -337,34 +419,146 @@ export default function TranscriptPage() {
                   </Label>
                 </div>
 
-                {moreActions.slice(1).map((action, index) => (
-                  <button
-                    key={index}
-                    className={cn(
-                      "w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm hover:bg-muted transition-colors text-left",
-                      action.destructive && "text-destructive hover:bg-destructive/10"
-                    )}
+                <button className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm hover:bg-muted transition-colors text-left">
+                  <MessageSquare className="h-4 w-4 text-muted-foreground" />
+                  <div className="flex-1 min-w-0">
+                    <span>ChatGPT</span>
+                    <p className="text-xs text-muted-foreground truncate">
+                      Summarize and chat with this transcript
+                    </p>
+                  </div>
+                </button>
+
+                <button className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm hover:bg-muted transition-colors text-left">
+                  <Languages className="h-4 w-4 text-muted-foreground" />
+                  <div className="flex-1 min-w-0">
+                    <span>Translate</span>
+                    <p className="text-xs text-muted-foreground truncate">
+                      Translate to 134+ languages
+                    </p>
+                  </div>
+                </button>
+
+                <button className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm hover:bg-muted transition-colors text-left">
+                  <Share2 className="h-4 w-4 text-muted-foreground" />
+                  <span>Share Transcript</span>
+                  <ChevronRight className="h-4 w-4 text-muted-foreground ml-auto" />
+                </button>
+
+                <button className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm hover:bg-muted transition-colors text-left">
+                  <Pencil className="h-4 w-4 text-muted-foreground" />
+                  <span>Edit Transcript</span>
+                  <ChevronRight className="h-4 w-4 text-muted-foreground ml-auto" />
+                </button>
+
+                {audioUrl && (
+                  <a 
+                    href={audioUrl}
+                    download={`${transcript.name}.${transcript.fileType?.split('/')[1] || 'mp3'}`}
+                    className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm hover:bg-muted transition-colors text-left"
                   >
-                    <action.icon className="h-4 w-4 text-muted-foreground" />
+                    <Music className="h-4 w-4 text-muted-foreground" />
                     <div className="flex-1 min-w-0">
-                      <span>{action.label}</span>
-                      {action.sublabel && (
-                        <p className="text-xs text-muted-foreground truncate">
-                          {action.sublabel}
+                      <span>Download Audio</span>
+                      {transcript.fileSize && (
+                        <p className="text-xs text-muted-foreground">
+                          {(transcript.fileSize / 1024 / 1024).toFixed(1)} MB
                         </p>
                       )}
                     </div>
-                    {!action.destructive && !action.sublabel && (
-                      <ChevronRight className="h-4 w-4 text-muted-foreground" />
-                    )}
-                  </button>
-                ))}
+                  </a>
+                )}
+
+                <button className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm hover:bg-muted transition-colors text-left">
+                  <Pencil className="h-4 w-4 text-muted-foreground" />
+                  <span>Rename File</span>
+                  <ChevronRight className="h-4 w-4 text-muted-foreground ml-auto" />
+                </button>
+
+                <button className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm hover:bg-muted transition-colors text-left">
+                  <FolderInput className="h-4 w-4 text-muted-foreground" />
+                  <span>Move to Folder</span>
+                  <ChevronRight className="h-4 w-4 text-muted-foreground ml-auto" />
+                </button>
+
+                <button
+                  onClick={handleDelete}
+                  className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm hover:bg-destructive/10 transition-colors text-left text-destructive"
+                >
+                  <Trash2 className="h-4 w-4" />
+                  <span>Delete File</span>
+                </button>
               </div>
             </div>
           </div>
         </ScrollArea>
       </div>
+
+      {/* Advanced Export Dialog */}
+      <Dialog open={advancedExportOpen} onOpenChange={setAdvancedExportOpen}>
+        <DialogContent className="sm:max-w-[425px]">
+          <DialogHeader>
+            <DialogTitle>Advanced Export</DialogTitle>
+          </DialogHeader>
+          <div className="py-4 space-y-4">
+            <p className="text-sm text-muted-foreground">
+              Choose export options for your transcript.
+            </p>
+
+            {/* Options */}
+            <div className="space-y-3">
+              <div className="flex items-center gap-3">
+                <Checkbox
+                  id="export-timestamps"
+                  checked={showTimestamps}
+                  onCheckedChange={(checked) => setShowTimestamps(checked as boolean)}
+                />
+                <Label htmlFor="export-timestamps" className="text-sm cursor-pointer">
+                  Include timestamps
+                </Label>
+              </div>
+              <div className="flex items-center gap-3">
+                <Checkbox
+                  id="export-speakers"
+                  checked={showSpeakers}
+                  onCheckedChange={(checked) => setShowSpeakers(checked as boolean)}
+                />
+                <Label htmlFor="export-speakers" className="text-sm cursor-pointer">
+                  Include speaker labels
+                </Label>
+              </div>
+            </div>
+
+            {/* Format Selection */}
+            <div className="grid grid-cols-2 gap-2 pt-2">
+              {exportOptions.map((option) => (
+                <Button
+                  key={option.format}
+                  variant="outline"
+                  className="h-auto py-3 flex flex-col items-center gap-1"
+                  onClick={() => {
+                    handleExport(option.format, showTimestamps, showSpeakers);
+                    setAdvancedExportOpen(false);
+                  }}
+                  disabled={exportingFormat !== null}
+                >
+                  {exportingFormat === option.format ? (
+                    <Loader2 className="h-5 w-5 animate-spin" />
+                  ) : (
+                    <option.icon className="h-5 w-5" />
+                  )}
+                  <span className="text-xs">{option.format.toUpperCase()}</span>
+                </Button>
+              ))}
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAdvancedExportOpen(false)}>
+              Cancel
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
-

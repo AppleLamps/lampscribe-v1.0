@@ -90,7 +90,7 @@ export function FileTable({
               <Checkbox
                 checked={allSelected}
                 // @ts-ignore - indeterminate is a valid prop
-                indeterminate={someSelected}
+                indeterminate={someSelected ? true : undefined}
                 onCheckedChange={toggleAll}
               />
             </TableHead>

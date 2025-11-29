@@ -1,0 +1,181 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ============================================
+// NextAuth.js Models
+// ============================================
+model Account {
+  id                String  @id @default(cuid())
+  userId            String  @map("user_id")
+  type              String
+  provider          String
+  providerAccountId String  @map("provider_account_id")
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@map("accounts")
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique @map("session_token")
+  userId       String   @map("user_id")
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+}
+
+model VerificationToken {
+  identifier String
+  token      String
+  expires    DateTime
+
+  @@unique([identifier, token])
+  @@map("verification_tokens")
+}
+
+// ============================================
+// User Model
+// ============================================
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  emailVerified DateTime? @map("email_verified")
+  name          String?
+  image         String?
+  password      String?   // Hashed password for credentials login
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  // NextAuth relations
+  accounts      Account[]
+  sessions      Session[]
+
+  // App relations
+  transcripts   Transcript[]
+  folders       Folder[]
+
+  @@map("users")
+}
+
+// ============================================
+// Folder Model
+// ============================================
+model Folder {
+  id        String   @id @default(cuid())
+  name      String
+  color     String?  @default("#f59e0b") // Amber color
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  userId    String   @map("user_id")
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transcripts Transcript[]
+
+  @@index([userId])
+  @@map("folders")
+}
+
+// ============================================
+// Transcript Model
+// ============================================
+model Transcript {
+  id            String            @id @default(cuid())
+  name          String            // File name or custom title
+  originalName  String            @map("original_name") // Original uploaded file name
+  
+  // Transcription content
+  text          String            @db.Text
+  language      String?           // Detected or selected language
+  duration      Int?              // Duration in seconds
+  
+  // Transcription settings
+  mode          TranscriptionMode @default(DOLPHIN)
+  
+  // File info
+  fileSize      Int?              @map("file_size") // File size in bytes
+  fileType      String?           @map("file_type") // MIME type
+  audioUrl      String?           @map("audio_url") // URL to stored audio (optional)
+  
+  // Status
+  status        TranscriptStatus  @default(PROCESSING)
+  error         String?           // Error message if failed
+  
+  // Timestamps
+  createdAt     DateTime          @default(now()) @map("created_at")
+  updatedAt     DateTime          @updatedAt @map("updated_at")
+  completedAt   DateTime?         @map("completed_at") // When transcription completed
+
+  // Relations
+  userId        String            @map("user_id")
+  user          User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  folderId      String?           @map("folder_id")
+  folder        Folder?           @relation(fields: [folderId], references: [id], onDelete: SetNull)
+  segments      TranscriptSegment[]
+
+  @@index([userId])
+  @@index([folderId])
+  @@index([status])
+  @@index([createdAt])
+  @@map("transcripts")
+}
+
+// ============================================
+// Transcript Segment Model (for speaker diarization)
+// ============================================
+model TranscriptSegment {
+  id           String     @id @default(cuid())
+  
+  // Segment content
+  text         String     @db.Text
+  speaker      String?    // Speaker label (e.g., "Speaker 1")
+  
+  // Timestamps (in seconds)
+  startTime    Float      @map("start_time")
+  endTime      Float      @map("end_time")
+  
+  // Order in transcript
+  order        Int
+  
+  // Relations
+  transcriptId String     @map("transcript_id")
+  transcript   Transcript @relation(fields: [transcriptId], references: [id], onDelete: Cascade)
+
+  @@index([transcriptId])
+  @@map("transcript_segments")
+}
+
+// ============================================
+// Enums
+// ============================================
+enum TranscriptionMode {
+  CHEETAH   // gpt-4o-mini-transcribe (fastest)
+  DOLPHIN   // gpt-4o-transcribe (balanced)
+  WHALE     // gpt-4o-transcribe with diarization (most accurate)
+}
+
+enum TranscriptStatus {
+  PROCESSING
+  COMPLETED
+  FAILED
+}

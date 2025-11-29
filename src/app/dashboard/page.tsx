@@ -9,21 +9,35 @@ import {
   Download,
   FolderInput,
   Trash2,
+  Loader2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { FileTable } from "@/components/dashboard/FileTable";
 import { TranscribeModal } from "@/components/dashboard/TranscribeModal";
-import { mockTranscripts } from "@/lib/mock-data";
+import { EmptyState } from "@/components/dashboard/EmptyState";
+import { useTranscripts } from "@/hooks/useTranscripts";
 
 export default function DashboardPage() {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [transcribeModalOpen, setTranscribeModalOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
 
-  const filteredTranscripts = mockTranscripts.filter((t) =>
-    t.title.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  const { transcripts, isLoading, error, refetch } = useTranscripts({
+    search: searchQuery || undefined,
+  });
+
+  // Map database transcripts to FileTable format
+  const mappedTranscripts = transcripts.map((t) => ({
+    id: t.id,
+    title: t.name,
+    duration: t.duration || 0,
+    createdAt: new Date(t.createdAt),
+    status: t.status.toLowerCase() as 'processing' | 'completed' | 'failed',
+    mode: t.mode.toLowerCase() as 'cheetah' | 'dolphin' | 'whale',
+    folderId: t.folderId || undefined,
+    folderName: t.folder?.name,
+  }));
 
   return (
     <div className="p-4 sm:p-6 lg:p-8">
@@ -63,12 +77,54 @@ export default function DashboardPage() {
         </div>
       </div>
 
+      {/* Loading State */}
+      {isLoading && (
+        <div className="flex items-center justify-center py-20">
+          <Loader2 className="h-8 w-8 animate-spin text-primary" />
+        </div>
+      )}
+
+      {/* Error State */}
+      {error && (
+        <div className="flex flex-col items-center justify-center py-20">
+          <p className="text-destructive mb-4">{error}</p>
+          <Button onClick={refetch} variant="outline">
+            Try Again
+          </Button>
+        </div>
+      )}
+
+      {/* Empty State */}
+      {!isLoading && !error && transcripts.length === 0 && (
+        <EmptyState
+          title={searchQuery ? "No matching transcripts" : "No transcripts yet"}
+          description={
+            searchQuery
+              ? "Try adjusting your search query"
+              : "Upload an audio or video file to get started with your first transcription"
+          }
+          action={
+            !searchQuery && (
+              <Button
+                onClick={() => setTranscribeModalOpen(true)}
+                className="gradient-lamp text-lamp-dark hover:opacity-90 mt-4"
+              >
+                <Upload className="mr-2 h-4 w-4" />
+                Transcribe Files
+              </Button>
+            )
+          }
+        />
+      )}
+
       {/* File Table */}
-      <FileTable
-        transcripts={filteredTranscripts}
-        selectedIds={selectedIds}
-        onSelectionChange={setSelectedIds}
-      />
+      {!isLoading && !error && transcripts.length > 0 && (
+        <FileTable
+          transcripts={mappedTranscripts}
+          selectedIds={selectedIds}
+          onSelectionChange={setSelectedIds}
+        />
+      )}
 
       {/* Bulk Actions */}
       {selectedIds.length > 0 && (
@@ -96,9 +152,14 @@ export default function DashboardPage() {
       {/* Transcribe Modal */}
       <TranscribeModal
         open={transcribeModalOpen}
-        onOpenChange={setTranscribeModalOpen}
+        onOpenChange={(open) => {
+          setTranscribeModalOpen(open);
+          // Refresh the list when modal closes
+          if (!open) {
+            refetch();
+          }
+        }}
       />
     </div>
   );
 }
-

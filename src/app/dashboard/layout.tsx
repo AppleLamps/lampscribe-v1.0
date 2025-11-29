@@ -2,25 +2,24 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
+import { useSession, signOut } from "next-auth/react";
 import {
   Lamp,
   LayoutGrid,
   FolderClosed,
   FolderOpen,
-  Clock,
   FileText,
   Settings,
   LogOut,
   ChevronDown,
   Plus,
   Menu,
-  X,
   Crown,
+  Loader2,
 } from "lucide-react";
-import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -28,8 +27,18 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { mockFolders, mockUser } from "@/lib/mock-data";
+import { useFolders } from "@/hooks/useTranscripts";
 
 export default function DashboardLayout({
   children,
@@ -37,14 +46,41 @@ export default function DashboardLayout({
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
+  const router = useRouter();
+  const { data: session, status } = useSession();
+  
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [foldersExpanded, setFoldersExpanded] = useState(true);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+  const [newFolderDialogOpen, setNewFolderDialogOpen] = useState(false);
+  const [newFolderName, setNewFolderName] = useState("");
+
+  const { folders, isLoading: foldersLoading, createFolder } = useFolders();
 
   const navigation = [
     { name: "Recent Files", href: "/dashboard", icon: LayoutGrid },
     { name: "Uncategorized", href: "/dashboard/uncategorized", icon: FileText },
   ];
+
+  const handleCreateFolder = async () => {
+    if (newFolderName.trim()) {
+      await createFolder(newFolderName.trim());
+      setNewFolderName("");
+      setNewFolderDialogOpen(false);
+    }
+  };
+
+  const handleSignOut = async () => {
+    await signOut({ callbackUrl: "/" });
+  };
+
+  // Get user info from session
+  const user = session?.user;
+  const userInitials = user?.name
+    ?.split(" ")
+    .map((n) => n[0])
+    .join("")
+    .toUpperCase() || user?.email?.[0].toUpperCase() || "U";
 
   const SidebarContent = () => (
     <>
@@ -66,7 +102,7 @@ export default function DashboardLayout({
           <div className="flex items-center gap-2 rounded-lg gradient-lamp px-3 py-2">
             <Crown className="h-4 w-4 text-lamp-dark" />
             <span className="text-sm font-semibold text-lamp-dark">
-              {mockUser.plan === "unlimited" ? "Unlimited" : "Free Plan"}
+              Free Plan
             </span>
           </div>
         </div>
@@ -120,37 +156,52 @@ export default function DashboardLayout({
           )}
           {(!sidebarOpen || foldersExpanded) && (
             <nav className="space-y-1">
-              {mockFolders.map((folder) => {
-                const isActive = pathname === `/dashboard/folder/${folder.id}`;
-                return (
-                  <Link
-                    key={folder.id}
-                    href={`/dashboard/folder/${folder.id}`}
-                    className={cn(
-                      "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
-                      isActive
-                        ? "bg-sidebar-accent text-sidebar-accent-foreground"
-                        : "text-sidebar-foreground hover:bg-sidebar-accent/50"
-                    )}
-                  >
-                    {isActive ? (
-                      <FolderOpen className="h-4 w-4 shrink-0" />
-                    ) : (
-                      <FolderClosed className="h-4 w-4 shrink-0" />
-                    )}
-                    {sidebarOpen && (
-                      <>
-                        <span className="flex-1 truncate">{folder.name}</span>
-                        <span className="text-xs text-muted-foreground">
-                          {folder.transcriptCount}
-                        </span>
-                      </>
-                    )}
-                  </Link>
-                );
-              })}
+              {foldersLoading ? (
+                <div className="flex items-center justify-center py-4">
+                  <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                </div>
+              ) : folders.length === 0 ? (
+                sidebarOpen && (
+                  <p className="px-3 py-2 text-sm text-muted-foreground">
+                    No folders yet
+                  </p>
+                )
+              ) : (
+                folders.map((folder) => {
+                  const isActive = pathname === `/dashboard/folder/${folder.id}`;
+                  return (
+                    <Link
+                      key={folder.id}
+                      href={`/dashboard/folder/${folder.id}`}
+                      className={cn(
+                        "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
+                        isActive
+                          ? "bg-sidebar-accent text-sidebar-accent-foreground"
+                          : "text-sidebar-foreground hover:bg-sidebar-accent/50"
+                      )}
+                    >
+                      {isActive ? (
+                        <FolderOpen className="h-4 w-4 shrink-0" style={{ color: folder.color || undefined }} />
+                      ) : (
+                        <FolderClosed className="h-4 w-4 shrink-0" style={{ color: folder.color || undefined }} />
+                      )}
+                      {sidebarOpen && (
+                        <>
+                          <span className="flex-1 truncate">{folder.name}</span>
+                          <span className="text-xs text-muted-foreground">
+                            {folder._count?.transcripts || 0}
+                          </span>
+                        </>
+                      )}
+                    </Link>
+                  );
+                })
+              )}
               {sidebarOpen && (
-                <button className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-muted-foreground hover:bg-sidebar-accent/50 hover:text-foreground transition-colors">
+                <button
+                  onClick={() => setNewFolderDialogOpen(true)}
+                  className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-muted-foreground hover:bg-sidebar-accent/50 hover:text-foreground transition-colors"
+                >
                   <Plus className="h-4 w-4" />
                   <span>New Folder</span>
                 </button>
@@ -166,16 +217,17 @@ export default function DashboardLayout({
           <DropdownMenuTrigger asChild>
             <button className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium hover:bg-sidebar-accent/50 transition-colors">
               <Avatar className="h-8 w-8">
+                {user?.image && <AvatarImage src={user.image} alt={user.name || ""} />}
                 <AvatarFallback className="bg-primary text-primary-foreground text-xs">
-                  {mockUser.name.split(" ").map((n) => n[0]).join("")}
+                  {userInitials}
                 </AvatarFallback>
               </Avatar>
               {sidebarOpen && (
                 <>
                   <div className="flex-1 text-left">
-                    <p className="text-sm font-medium truncate">{mockUser.name}</p>
+                    <p className="text-sm font-medium truncate">{user?.name || "User"}</p>
                     <p className="text-xs text-muted-foreground truncate">
-                      {mockUser.email}
+                      {user?.email}
                     </p>
                   </div>
                   <ChevronDown className="h-4 w-4 text-muted-foreground" />
@@ -189,7 +241,10 @@ export default function DashboardLayout({
               Account Settings
             </DropdownMenuItem>
             <DropdownMenuSeparator />
-            <DropdownMenuItem className="text-destructive">
+            <DropdownMenuItem 
+              className="text-destructive"
+              onClick={handleSignOut}
+            >
               <LogOut className="mr-2 h-4 w-4" />
               Log Out
             </DropdownMenuItem>
@@ -198,6 +253,15 @@ export default function DashboardLayout({
       </div>
     </>
   );
+
+  // Show loading while checking session
+  if (status === "loading") {
+    return (
+      <div className="flex h-screen items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-screen bg-background">
@@ -246,7 +310,39 @@ export default function DashboardLayout({
         {/* Page Content */}
         <main className="flex-1 overflow-auto">{children}</main>
       </div>
+
+      {/* New Folder Dialog */}
+      <Dialog open={newFolderDialogOpen} onOpenChange={setNewFolderDialogOpen}>
+        <DialogContent className="sm:max-w-[400px]">
+          <DialogHeader>
+            <DialogTitle>Create New Folder</DialogTitle>
+          </DialogHeader>
+          <div className="py-4">
+            <Label htmlFor="folder-name" className="mb-2 block">
+              Folder Name
+            </Label>
+            <Input
+              id="folder-name"
+              value={newFolderName}
+              onChange={(e) => setNewFolderName(e.target.value)}
+              placeholder="Enter folder name"
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  handleCreateFolder();
+                }
+              }}
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setNewFolderDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleCreateFolder} disabled={!newFolderName.trim()}>
+              Create Folder
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
-
