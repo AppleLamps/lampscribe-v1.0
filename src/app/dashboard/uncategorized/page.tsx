@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import {
   FileText,
   Search,
@@ -9,12 +9,13 @@ import {
   Download,
   FolderInput,
   Trash2,
+  Loader2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { FileTable } from "@/components/dashboard/FileTable";
 import { TranscribeModal } from "@/components/dashboard/TranscribeModal";
-import { mockTranscripts } from "@/lib/mock-data";
+import { useTranscripts, useFolders } from "@/hooks/useTranscripts";
 
 export default function UncategorizedPage() {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -22,10 +23,66 @@ export default function UncategorizedPage() {
   const [searchQuery, setSearchQuery] = useState("");
 
   // Get transcripts without a folder
-  const uncategorizedTranscripts = mockTranscripts.filter((t) => !t.folderId);
-  const filteredTranscripts = uncategorizedTranscripts.filter((t) =>
-    t.title.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  const { transcripts, isLoading, refetch } = useTranscripts({
+    folderId: 'uncategorized',
+    search: searchQuery || undefined,
+  });
+  const { folders } = useFolders();
+
+  // Map database transcripts to FileTable format
+  const mappedTranscripts = transcripts.map((t) => ({
+    id: t.id,
+    title: t.name,
+    duration: t.duration || 0,
+    createdAt: new Date(t.createdAt),
+    status: t.status.toLowerCase() as 'processing' | 'completed' | 'failed',
+    mode: t.mode.toLowerCase() as 'cheetah' | 'dolphin' | 'whale',
+    folderId: t.folderId || undefined,
+    folderName: t.folder?.name,
+  }));
+
+  // Handle moving a transcript to a folder
+  const handleMoveToFolder = useCallback(async (transcriptId: string, folderId: string | null) => {
+    try {
+      const response = await fetch(`/api/transcripts/${transcriptId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ folderId }),
+      });
+
+      if (response.ok) {
+        refetch();
+      }
+    } catch (error) {
+      console.error('Failed to move transcript:', error);
+    }
+  }, [refetch]);
+
+  // Handle deleting a transcript
+  const handleDelete = useCallback(async (transcriptId: string) => {
+    if (!confirm('Are you sure you want to delete this transcript?')) return;
+    
+    try {
+      const response = await fetch(`/api/transcripts/${transcriptId}`, {
+        method: 'DELETE',
+      });
+
+      if (response.ok) {
+        refetch();
+        setSelectedIds(ids => ids.filter(id => id !== transcriptId));
+      }
+    } catch (error) {
+      console.error('Failed to delete transcript:', error);
+    }
+  }, [refetch]);
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center h-full py-20">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      </div>
+    );
+  }
 
   return (
     <div className="p-4 sm:p-6 lg:p-8">
@@ -67,9 +124,12 @@ export default function UncategorizedPage() {
 
       {/* File Table */}
       <FileTable
-        transcripts={filteredTranscripts}
+        transcripts={mappedTranscripts}
         selectedIds={selectedIds}
         onSelectionChange={setSelectedIds}
+        folders={folders}
+        onMoveToFolder={handleMoveToFolder}
+        onDelete={handleDelete}
       />
 
       {/* Bulk Actions */}

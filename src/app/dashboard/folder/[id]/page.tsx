@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import { useParams } from "next/navigation";
 import {
   FolderOpen,
@@ -12,6 +12,7 @@ import {
   Trash2,
   MoreHorizontal,
   Pencil,
+  Loader2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -24,26 +25,74 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { FileTable } from "@/components/dashboard/FileTable";
 import { TranscribeModal } from "@/components/dashboard/TranscribeModal";
-import { mockTranscripts, mockFolders } from "@/lib/mock-data";
+import { useTranscripts, useFolders } from "@/hooks/useTranscripts";
 
 export default function FolderPage() {
   const params = useParams();
+  const folderId = params.id as string;
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [transcribeModalOpen, setTranscribeModalOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
 
-  const folder = mockFolders.find((f) => f.id === params.id);
-  const folderTranscripts = mockTranscripts.filter(
-    (t) => t.folderId === params.id
-  );
-  const filteredTranscripts = folderTranscripts.filter((t) =>
-    t.title.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  const { transcripts, isLoading, refetch } = useTranscripts({
+    folderId,
+    search: searchQuery || undefined,
+  });
+  const { folders } = useFolders();
+  
+  const folder = folders.find((f) => f.id === folderId);
 
-  if (!folder) {
+  // Map database transcripts to FileTable format
+  const mappedTranscripts = transcripts.map((t) => ({
+    id: t.id,
+    title: t.name,
+    duration: t.duration || 0,
+    createdAt: new Date(t.createdAt),
+    status: t.status.toLowerCase() as 'processing' | 'completed' | 'failed',
+    mode: t.mode.toLowerCase() as 'cheetah' | 'dolphin' | 'whale',
+    folderId: t.folderId || undefined,
+    folderName: t.folder?.name,
+  }));
+
+  // Handle moving a transcript to a folder
+  const handleMoveToFolder = useCallback(async (transcriptId: string, targetFolderId: string | null) => {
+    try {
+      const response = await fetch(`/api/transcripts/${transcriptId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ folderId: targetFolderId }),
+      });
+
+      if (response.ok) {
+        refetch();
+      }
+    } catch (error) {
+      console.error('Failed to move transcript:', error);
+    }
+  }, [refetch]);
+
+  // Handle deleting a transcript
+  const handleDelete = useCallback(async (transcriptId: string) => {
+    if (!confirm('Are you sure you want to delete this transcript?')) return;
+    
+    try {
+      const response = await fetch(`/api/transcripts/${transcriptId}`, {
+        method: 'DELETE',
+      });
+
+      if (response.ok) {
+        refetch();
+        setSelectedIds(ids => ids.filter(id => id !== transcriptId));
+      }
+    } catch (error) {
+      console.error('Failed to delete transcript:', error);
+    }
+  }, [refetch]);
+
+  if (isLoading) {
     return (
-      <div className="flex items-center justify-center h-full">
-        <p className="text-muted-foreground">Folder not found</p>
+      <div className="flex items-center justify-center h-full py-20">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
       </div>
     );
   }
@@ -54,7 +103,7 @@ export default function FolderPage() {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
         <div className="flex items-center gap-3">
           <FolderOpen className="h-6 w-6 text-primary" />
-          <h1 className="text-2xl font-bold">{folder.name}</h1>
+          <h1 className="text-2xl font-bold">{folder?.name || 'Folder'}</h1>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="ghost" size="icon" className="h-8 w-8">
@@ -106,9 +155,12 @@ export default function FolderPage() {
 
       {/* File Table */}
       <FileTable
-        transcripts={filteredTranscripts}
+        transcripts={mappedTranscripts}
         selectedIds={selectedIds}
         onSelectionChange={setSelectedIds}
+        folders={folders}
+        onMoveToFolder={handleMoveToFolder}
+        onDelete={handleDelete}
       />
 
       {/* Bulk Actions */}

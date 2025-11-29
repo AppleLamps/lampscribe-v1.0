@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import {
   LayoutGrid,
   Search,
@@ -16,7 +16,7 @@ import { Input } from "@/components/ui/input";
 import { FileTable } from "@/components/dashboard/FileTable";
 import { TranscribeModal } from "@/components/dashboard/TranscribeModal";
 import { EmptyState } from "@/components/dashboard/EmptyState";
-import { useTranscripts } from "@/hooks/useTranscripts";
+import { useTranscripts, useFolders } from "@/hooks/useTranscripts";
 
 export default function DashboardPage() {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -26,6 +26,43 @@ export default function DashboardPage() {
   const { transcripts, isLoading, error, refetch } = useTranscripts({
     search: searchQuery || undefined,
   });
+  
+  const { folders } = useFolders();
+
+  // Handle moving a transcript to a folder
+  const handleMoveToFolder = useCallback(async (transcriptId: string, folderId: string | null) => {
+    try {
+      const response = await fetch(`/api/transcripts/${transcriptId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ folderId }),
+      });
+
+      if (response.ok) {
+        refetch(); // Refresh the transcript list
+      }
+    } catch (error) {
+      console.error('Failed to move transcript:', error);
+    }
+  }, [refetch]);
+
+  // Handle deleting a transcript
+  const handleDelete = useCallback(async (transcriptId: string) => {
+    if (!confirm('Are you sure you want to delete this transcript?')) return;
+    
+    try {
+      const response = await fetch(`/api/transcripts/${transcriptId}`, {
+        method: 'DELETE',
+      });
+
+      if (response.ok) {
+        refetch();
+        setSelectedIds(ids => ids.filter(id => id !== transcriptId));
+      }
+    } catch (error) {
+      console.error('Failed to delete transcript:', error);
+    }
+  }, [refetch]);
 
   // Map database transcripts to FileTable format
   const mappedTranscripts = transcripts.map((t) => ({
@@ -123,6 +160,9 @@ export default function DashboardPage() {
           transcripts={mappedTranscripts}
           selectedIds={selectedIds}
           onSelectionChange={setSelectedIds}
+          folders={folders}
+          onMoveToFolder={handleMoveToFolder}
+          onDelete={handleDelete}
         />
       )}
 

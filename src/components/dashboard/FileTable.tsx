@@ -11,6 +11,9 @@ import {
   CheckCircle2,
   Loader2,
   AlertCircle,
+  Folder,
+  FolderOpen,
+  Check,
 } from "lucide-react";
 import {
   Table,
@@ -28,21 +31,41 @@ import {
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
+  DropdownMenuSub,
+  DropdownMenuSubTrigger,
+  DropdownMenuSubContent,
+  DropdownMenuPortal,
 } from "@/components/ui/dropdown-menu";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { Transcript, formatDuration, TRANSCRIPTION_MODES } from "@/lib/types";
 
+interface FolderOption {
+  id: string;
+  name: string;
+  color?: string | null;
+}
+
 interface FileTableProps {
   transcripts: Transcript[];
   selectedIds: string[];
   onSelectionChange: (ids: string[]) => void;
+  folders?: FolderOption[];
+  onMoveToFolder?: (transcriptId: string, folderId: string | null) => void;
+  onDelete?: (transcriptId: string) => void;
+  onRename?: (transcriptId: string) => void;
+  onExport?: (transcriptId: string) => void;
 }
 
 export function FileTable({
   transcripts,
   selectedIds,
   onSelectionChange,
+  folders = [],
+  onMoveToFolder,
+  onDelete,
+  onRename,
+  onExport,
 }: FileTableProps) {
   const allSelected =
     transcripts.length > 0 && selectedIds.length === transcripts.length;
@@ -172,20 +195,64 @@ export function FileTable({
                       </Button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end">
-                      <DropdownMenuItem>
+                      <DropdownMenuItem onClick={() => onExport?.(transcript.id)}>
                         <Download className="mr-2 h-4 w-4" />
                         Export
                       </DropdownMenuItem>
-                      <DropdownMenuItem>
-                        <FolderInput className="mr-2 h-4 w-4" />
-                        Move to Folder
-                      </DropdownMenuItem>
-                      <DropdownMenuItem>
+                      <DropdownMenuSub>
+                        <DropdownMenuSubTrigger>
+                          <FolderInput className="mr-2 h-4 w-4" />
+                          Move to Folder
+                        </DropdownMenuSubTrigger>
+                        <DropdownMenuPortal>
+                          <DropdownMenuSubContent>
+                            {/* Option to remove from folder (move to uncategorized) */}
+                            <DropdownMenuItem
+                              onClick={() => onMoveToFolder?.(transcript.id, null)}
+                              className={cn(!transcript.folderId && "bg-accent")}
+                            >
+                              <FolderOpen className="mr-2 h-4 w-4 text-muted-foreground" />
+                              <span>Uncategorized</span>
+                              {!transcript.folderId && (
+                                <Check className="ml-auto h-4 w-4" />
+                              )}
+                            </DropdownMenuItem>
+                            {folders.length > 0 && <DropdownMenuSeparator />}
+                            {folders.map((folder) => (
+                              <DropdownMenuItem
+                                key={folder.id}
+                                onClick={() => onMoveToFolder?.(transcript.id, folder.id)}
+                                className={cn(transcript.folderId === folder.id && "bg-accent")}
+                              >
+                                <Folder
+                                  className="mr-2 h-4 w-4"
+                                  style={{ color: folder.color || "#f59e0b" }}
+                                />
+                                <span>{folder.name}</span>
+                                {transcript.folderId === folder.id && (
+                                  <Check className="ml-auto h-4 w-4" />
+                                )}
+                              </DropdownMenuItem>
+                            ))}
+                            {folders.length === 0 && (
+                              <DropdownMenuItem disabled>
+                                <span className="text-muted-foreground text-sm">
+                                  No folders yet
+                                </span>
+                              </DropdownMenuItem>
+                            )}
+                          </DropdownMenuSubContent>
+                        </DropdownMenuPortal>
+                      </DropdownMenuSub>
+                      <DropdownMenuItem onClick={() => onRename?.(transcript.id)}>
                         <Pencil className="mr-2 h-4 w-4" />
                         Rename
                       </DropdownMenuItem>
                       <DropdownMenuSeparator />
-                      <DropdownMenuItem className="text-destructive">
+                      <DropdownMenuItem 
+                        className="text-destructive"
+                        onClick={() => onDelete?.(transcript.id)}
+                      >
                         <Trash2 className="mr-2 h-4 w-4" />
                         Delete
                       </DropdownMenuItem>
